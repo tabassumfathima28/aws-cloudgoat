@@ -11,17 +11,12 @@ AWS IAM policies keep a version history — up to 5 versions per managed policy.
 This scenario simulates exactly that: a low-privilege IAM user ("Raynor") whose current policy looks harmless, but who can roll back to a forgotten admin-level version.
 ## Screenshots
 
-![Policy versions](./screenshots/rollback_1_versions.png)
-*Enumerating the policy's version history — v1 (the oldest) is oddly the active/default version.*
+<img width="980" height="328" alt="rollback_4_verified" src="https://github.com/user-attachments/assets/0b286265-0b48-4aac-a360-5c32c6d7ea66" />
+<img width="980" height="232" alt="rollback_3_escalate" src="https://github.com/user-attachments/assets/9f3a9149-68e8-4a93-9d16-73609e226f70" />
+<img width="980" height="544" alt="rollback_2_v3_admin" src="https://github.com/user-attachments/assets/088d4355-341b-4d8e-abba-6fcd599fc22e" />
+<img width="980" height="400" alt="rollback_1_versions" src="https://github.com/user-attachments/assets/2abdeab3-2d3f-4d3f-b321-1744dc02ec30" />
 
-![v3 permissions](./screenshots/rollback_2_v3_admin.png)
-*Inspecting v3's actual permissions — full admin (`Action: *`, `Resource: *`).*
 
-![Escalation command](./screenshots/rollback_3_escalate.png)
-*Rolling the policy back to v3 using the narrow `SetDefaultPolicyVersion` permission.*
-
-![Verified access](./screenshots/rollback_4_verified.png)
-*Verifying escalation — S3 and EC2 calls now succeed for Raynor.*
 
 ## Step-by-step
 
