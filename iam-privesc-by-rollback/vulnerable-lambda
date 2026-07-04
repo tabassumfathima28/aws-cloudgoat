@@ -8,33 +8,6 @@
 
 A Lambda function was designed to attach IAM policies to a user, but only if a small internal SQLite database confirmed the requested policy was "public" (self-service approved). The function built its database query by directly inserting user-supplied input into a SQL string, with no sanitization. This allowed a classic SQL injection: crafting an input that bypassed the "is this policy approved?" check entirely, tricking the function into attaching `AdministratorAccess` to a low-privilege user.
 
-## Attack chain
-
-Start (bilbo's limited credentials)
-│
-▼
-List IAM roles → find cg-lambda-invoker (bilbo is allowed to assume it)
-│
-▼
-Assume the cg-lambda-invoker role (temporary elevated-but-still-limited credentials)
-│
-▼
-List Lambda functions as the assumed role → find policy_applier_lambda1
-│
-▼
-Download and read the function's source code
-│   → finds unsanitized SQL query built from user input
-▼
-Craft a SQL injection payload: "AdministratorAccess' -- "
-│
-▼
-Invoke the Lambda with the payload → bypasses the approval check
-│
-▼
-bilbo now has AdministratorAccess attached
-│
-▼
-Use admin access to read the final secret from Secrets Manager
 
 ## Screenshots
 
