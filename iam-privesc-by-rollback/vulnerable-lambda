@@ -11,19 +11,17 @@ A Lambda function was designed to attach IAM policies to a user, but only if a s
 
 ## Screenshots
 
-![Vulnerable code](./screenshots/lambda_1_vuln_code.png)
+
 *The Lambda's source code — user input is pasted directly into a SQL query with no sanitization.*
 
-![Injection payload](./screenshots/lambda_2_payload.png)
+
 *The crafted payload — closes the string early and comments out the approval check.*
 
-![Successful invoke](./screenshots/lambda_3_invoke_success.png)
 *Invoking the Lambda with the payload — it reports success instead of rejecting the policy.*
 
-![Escalated permissions](./screenshots/lambda_4_escalated.png)
+
 *Confirming bilbo now has `AdministratorAccess` attached.*
 
-![Final flag](./screenshots/lambda_5_final_flag.png)
 *Retrieving the final secret from AWS Secrets Manager using the escalated access.*
 
 ## Step-by-step
